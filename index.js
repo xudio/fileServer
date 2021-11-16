@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs-extra");
 const path = require("path");
 const multiparty = require("multiparty");
+const slog = require("single-line-log").stdout;
 
 const server = http.createServer();
 
@@ -26,7 +27,7 @@ server.on("request", (req, res) => {
   } else if (req.url == "/") {
     const form = new multiparty.Form();
     form.parse(req, async (err, fields, file) => {
-      const { hash, filename } = fields;
+      const { hash, filename, count } = fields;
 
       if (!fs.existsSync("text")) {
         //如果不存在文件夹则创建文件夹
@@ -35,7 +36,11 @@ server.on("request", (req, res) => {
 
       await fs.move(file.chunk[0].path, `${pathText}/${hash}`);
 
-      console.log(hash[0] + " upload is success");
+      await fs.readdir("./text", (err, files) => {
+        slog(parseInt(files.length / count * 100) + "% is uploaded\n");
+      });
+
+      // console.log(hash[0] + " upload is success");
 
       res.statusCode = 200;
       res.end("chunk upload is success");
