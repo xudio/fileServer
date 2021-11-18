@@ -3,12 +3,14 @@ const fs = require("fs-extra");
 const path = require("path");
 const multiparty = require("multiparty");
 const slog = require("single-line-log").stdout;
+const inquirer = require("inquirer");
+const process = require("process");
 
 const server = http.createServer();
 
-const chunkDirPath = path.resolve(__dirname, "./text"); //获取创建的切片文件夹绝对路径
+// const chunkDirPath = path.resolve(__dirname, "./text"); //获取创建的切片文件夹绝对路径
 const fileDirPath = path.resolve(__dirname, "./file"); //获取创建的文件夹绝对路径
-const SAVEFILETIME = 1 * 60 * 1000; //服务器文件保存时间
+const SAVEFILETIME = 1 * 60 * 1000; //服务器文件保存时间 1分钟
 
 server.on("request", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -21,8 +23,23 @@ server.on("request", async (req, res) => {
 
       console.log(data.filename + " is upload success");
 
-      res.statusCode = 200;
-      res.end(data.filename + " is upload success");
+      const prompt = [
+        {
+          type: "input",
+          message: "请输入文件上传后，服务器返回的值：",
+          name: "name",
+          default: 0,
+        },
+      ];
+
+      inquirer.prompt(prompt).then(answer => {
+        res.statusCode = 200;
+        res.end(
+          JSON.stringify({
+            errCode: answer.name,
+          })
+        );
+      });
     });
   } else if (req.url == "/") {
     const form = new multiparty.Form();
@@ -34,22 +51,16 @@ server.on("request", async (req, res) => {
       }
       const { hash, filename, count } = fields;
 
-      if (!fs.existsSync("text")) {
+      if (!fs.existsSync(`${filename}`)) {
         //如果不存在文件夹则创建文件夹
-        fs.mkdirSync("text");
+        fs.mkdirSync(`${filename}`);
       }
 
+      const chunkDirPath = path.resolve(__dirname, `./${filename}`);
       await fs.move(file.chunk[0].path, `${chunkDirPath}/${hash}`);
 
-      await fs.readdir("text", (err, files) => {
-        slog(
-          parseInt(files.length / count * 100) +
-            "% is uploaded " +
-            files.length +
-            "/" +
-            count +
-            "\n"
-        );
+      await fs.readdir(`${filename}`, (err, files) => {
+        slog(progressBar("file is uploaded", 25, count, files.length));
       });
 
       // console.log(hash[0] + " upload is success");
@@ -57,23 +68,33 @@ server.on("request", async (req, res) => {
       res.statusCode = 200;
       res.end(hash + " upload is success");
     });
-  } else if (req.url == "/restore") {
-    res.end(
-      JSON.stringify({
-        uploadedList: await createUploadedList(),
-      })
-    );
+  } else if (req.url == "/verify") {
+    req.on("data", async data => {
+      data = JSON.parse(data);
+      let filename = data.filename;
+      res.end(
+        JSON.stringify({
+          uploadedList: await createUploadedList(filename),
+        })
+      );
+    });
   }
 });
 server.listen("3000", () => {
   console.log("正在监听3000端口");
 });
-async function createUploadedList() {
+
+process.on("uncaughtException", err => {
+  console.log("This is a error:" + err);
+});
+async function createUploadedList(filename) {
+  const chunkDirPath = path.resolve(__dirname, `./${filename}`);
   return fs.existsSync(chunkDirPath) ? await fs.readdir(chunkDirPath) : [];
 }
 async function handleChunk(data) {
   const filename = data.filename;
   const size = data.size;
+  const chunkDirPath = path.resolve(__dirname, `./${filename}`);
   const fileChunkList = fs
     .readdirSync(chunkDirPath)
     .filter(name => name.match(new RegExp(filename)))
@@ -85,10 +106,11 @@ async function handleChunk(data) {
   }
   const filePath = path.resolve(fileDirPath, `./${filename}`);
 
-  await mergeFileChunk(fileChunkList, filePath, size);
+  await mergeFileChunk(fileChunkList, filePath, size, filename);
 }
 
-async function mergeFileChunk(fileChunkList, filePath, size) {
+async function mergeFileChunk(fileChunkList, filePath, size, filename) {
+  const chunkDirPath = path.resolve(__dirname, `./${filename}`);
   await Promise.all(
     fileChunkList.map((chunkPath, index) =>
       pipeStream(
@@ -100,8 +122,11 @@ async function mergeFileChunk(fileChunkList, filePath, size) {
         })
       )
     )
-  );
-  fs.rmdirSync(chunkDirPath); // 合并后删除保存切片的目录
+  ).then(() => {
+    fs.rmdirSync(chunkDirPath, err => {
+      console.log(err);
+    }); // 合并后删除保存切片的目录
+  });
 }
 
 const pipeStream = (path, writeStream) =>
@@ -114,11 +139,6 @@ const pipeStream = (path, writeStream) =>
     readStream.pipe(writeStream);
   });
 
-//初始化
-function init() {
-  checkFileTime();
-  setInterval(checkFileTime, 1000);
-}
 //检查文件创建时间是否超时 超时则删除
 function checkFileTime() {
   if (fs.existsSync("file")) {
@@ -146,5 +166,25 @@ function checkFileTime() {
       });
     });
   }
+}
+//进度条
+function progressBar(description, barWidth, count, uploaded) {
+  let str = description + " " + parseInt(uploaded / count * 100) + "% [",
+    index = 0;
+  while (index < barWidth) {
+    if (index < parseInt(uploaded / count * barWidth)) {
+      str += "=";
+    } else {
+      str += " ";
+    }
+    index++;
+  }
+  str = str + "] " + uploaded + "/" + count + "\n";
+  return str;
+}
+//初始化
+function init() {
+  checkFileTime();
+  setInterval(checkFileTime, 1000);
 }
 init();
