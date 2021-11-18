@@ -6,27 +6,32 @@ const slog = require("single-line-log").stdout;
 
 const server = http.createServer();
 
-const pathText = path.resolve(__dirname, "./text"); //获取创建的文件夹绝对路径
-const filePath = path.resolve(__dirname, "./file"); //获取创建的文件绝对路径
+const chunkDirPath = path.resolve(__dirname, "./text"); //获取创建的切片文件夹绝对路径
+const fileDirPath = path.resolve(__dirname, "./file"); //获取创建的文件夹绝对路径
 const SAVEFILETIME = 1 * 60 * 1000; //服务器文件保存时间
 
-server.on("request", (req, res) => {
+server.on("request", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
 
   if (req.url == "/merge") {
     //切片传输完成
     req.on("data", async data => {
       data = JSON.parse(data);
-      await sortChunk(data); //排序合并切片
+      await handleChunk(data); //排序合并切片
 
-      console.log("file is upload success");
+      console.log(data.filename + " is upload success");
 
       res.statusCode = 200;
-      res.end("file is upload success");
+      res.end(data.filename + " is upload success");
     });
   } else if (req.url == "/") {
     const form = new multiparty.Form();
     form.parse(req, async (err, fields, file) => {
+      if (err) {
+        res.status = 500;
+        res.end("process file chunk failed");
+        return;
+      }
       const { hash, filename, count } = fields;
 
       if (!fs.existsSync("text")) {
@@ -34,25 +39,43 @@ server.on("request", (req, res) => {
         fs.mkdirSync("text");
       }
 
-      await fs.move(file.chunk[0].path, `${pathText}/${hash}`);
+      await fs.move(file.chunk[0].path, `${chunkDirPath}/${hash}`);
 
-      await fs.readdir("./text", (err, files) => {
-        slog(parseInt(files.length / count * 100) + "% is uploaded\n");
+      await fs.readdir("text", (err, files) => {
+        slog(
+          parseInt(files.length / count * 100) +
+            "% is uploaded " +
+            files.length +
+            "/" +
+            count +
+            "\n"
+        );
       });
 
       // console.log(hash[0] + " upload is success");
 
       res.statusCode = 200;
-      res.end("chunk upload is success");
+      res.end(hash + " upload is success");
     });
+  } else if (req.url == "/restore") {
+    res.end(
+      JSON.stringify({
+        uploadedList: await createUploadedList(),
+      })
+    );
   }
 });
-
-async function sortChunk(data) {
+server.listen("3000", () => {
+  console.log("正在监听3000端口");
+});
+async function createUploadedList() {
+  return fs.existsSync(chunkDirPath) ? await fs.readdir(chunkDirPath) : [];
+}
+async function handleChunk(data) {
   const filename = data.filename;
   const size = data.size;
   const fileChunkList = fs
-    .readdirSync(pathText)
+    .readdirSync(chunkDirPath)
     .filter(name => name.match(new RegExp(filename)))
     .sort((a, b) => parseInt(a.split("_")[1]) - parseInt(b.split("_")[1]));
 
@@ -60,7 +83,7 @@ async function sortChunk(data) {
     //如果不存在文件夹则创建文件夹
     fs.mkdirSync("file");
   }
-  const filePath = path.resolve(__dirname, "./file", `./${filename}`);
+  const filePath = path.resolve(fileDirPath, `./${filename}`);
 
   await mergeFileChunk(fileChunkList, filePath, size);
 }
@@ -69,7 +92,7 @@ async function mergeFileChunk(fileChunkList, filePath, size) {
   await Promise.all(
     fileChunkList.map((chunkPath, index) =>
       pipeStream(
-        path.resolve(pathText, `./${chunkPath}`),
+        path.resolve(chunkDirPath, `./${chunkPath}`),
         // 指定位置创建可写流
         fs.createWriteStream(filePath, {
           start: index * size,
@@ -78,7 +101,7 @@ async function mergeFileChunk(fileChunkList, filePath, size) {
       )
     )
   );
-  fs.rmdirSync(pathText); // 合并后删除保存切片的目录
+  fs.rmdirSync(chunkDirPath); // 合并后删除保存切片的目录
 }
 
 const pipeStream = (path, writeStream) =>
@@ -90,10 +113,6 @@ const pipeStream = (path, writeStream) =>
     });
     readStream.pipe(writeStream);
   });
-
-server.listen("3000", () => {
-  console.log("正在监听3000端口");
-});
 
 //初始化
 function init() {
@@ -112,7 +131,7 @@ function checkFileTime() {
       }
 
       files.forEach(filename => {
-        dir = path.resolve(filePath, filename);
+        dir = path.resolve(fileDirPath, filename);
         fs.stat(dir, async (err, stats) => {
           if (err) {
             console.log(err);
