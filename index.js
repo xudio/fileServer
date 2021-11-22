@@ -122,11 +122,13 @@ async function mergeFileChunk(fileChunkList, filePath, size, filename) {
         })
       )
     )
-  ).then(() => {
-    fs.rmdirSync(chunkDirPath, err => {
-      console.log(err);
-    }); // 合并后删除保存切片的目录
-  });
+  );
+  //删除合并后的切片文件夹
+  await fs.readdir(chunkDirPath, (err, files) => {
+    if (files.length == 0) {
+      fs.rmdirSync(chunkDirPath);
+    }
+  }); 
 }
 
 const pipeStream = (path, writeStream) =>
