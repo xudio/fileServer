@@ -19,6 +19,7 @@
 <script>
 const SIZE = 10 * 1024; //切片大小
 const NUM = 100; // 并发限制数量
+import md5 from "spark-md5";
 export default {
   name: "App",
   data() {
@@ -58,6 +59,28 @@ export default {
         requestList?.push(xhr);
       });
     },
+    //文件内容生成MD5值
+    async createHash(fileChunkList) {
+      // let work = new Worker("/hash.js");
+      // work.postMessage(fileChunkList);
+      // work.onmessage = (e) => e.data;
+      let list = [], hashList = [];
+      if (Array.isArray(fileChunkList)) {
+        list = fileChunkList;
+      } else {
+        list.push({ file: fileChunkList });
+      }
+      let spark = new md5.ArrayBuffer();
+      await list.map((chunk) => {
+        let reader = new FileReader();
+        reader.readAsArrayBuffer(chunk.file);
+        reader.onload = (e) => {
+          spark.append(e.target.result);
+          hashList.push(spark.end());
+        };
+      });
+      return hashList;
+    },
     upload() {
       //切片上传
       if (this.isChunkUpload) {
@@ -87,14 +110,18 @@ export default {
     async handleUpload(response) {
       if (!this.fileData) return;
       this.requestList = [];
-      let fileChunkList = this.createdFileChunk(this.fileData);
-      // let hash = this.createHash(fileChunkList);
-      this.chunkList = fileChunkList.map(({ file }, index) => ({
-        // filehash: hash,
-        chunk: file,
-        hash: this.fileData.name + "_" + index
-      }));
-      await this.uploadChunk(response);
+      let fileHash = await this.createHash(this.fileData);
+      if (!this.examine(fileHash[0])) {
+        let fileChunkList = this.createdFileChunk(this.fileData);
+        let hashChunkList = await this.createHash(fileChunkList);
+
+        this.chunkList = hashChunkList.map(({ file }, index) => ({
+          hash: hashChunkList + "_" + index,
+          chunk: 
+          // hash: this.fileData.name + "_" + index
+        }));
+        await this.uploadChunk(response);
+      }
     },
     //上传切片
     async uploadChunk(response) {
@@ -134,6 +161,19 @@ export default {
         data: JSON.stringify({ filename: this.fileData.name, size: SIZE })
       }).then(() => {
         this.clear();
+      });
+    },
+    //验证服务器是否存在文件
+    examine(data) {file
+      this.request({
+        url: "http://localhost:3000/examine",
+        data: JSON.stringify({ filename: data })
+      }).then((response) => {
+        response = JSON.parse(response.data);
+        if (response.errCode != 0) {
+          return false;
+        }
+        return true;
       });
     },
     asyncFunc(val) {

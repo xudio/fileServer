@@ -105,6 +105,33 @@ server.on("request", async (req, res) => {
         );
       });
     });
+  } else if (req.url == "/examine") {
+    req.on("data", async data => {
+      data = JSON.parse(data);
+      await fs.readdir(fileDirPath, (err, files) => {
+        if (err) {
+          console.log(err);
+          return;
+        }
+        files.forEach(filename => {
+          if (data.filename == filename) {
+            console.log(filename + " is upload success")
+            res.statusCode = 200;
+            res.end(
+              JSON.stringify({
+                errCode: 0,
+              })
+            );
+          }
+        });
+      });
+      res.statusCode = 200;
+      res.end(
+        JSON.stringify({
+          errCode: 1,
+        })
+      );
+    })
   }
 });
 server.listen("3000", () => {
